@@ -1,0 +1,411 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Golf Pool — Live</title>
+<style>
+  :root{
+    --felt:#0B3D2E; --felt-deep:#07301F; --cream:#F5F0E1; --card:#FBF8EF;
+    --navy:#14315C; --flag:#C8442F; --under:#1E7A46; --over:#C8442F;
+    --sand:#D8C9A3; --ink:#1A1A17; --muted:#6F6A5C;
+    --serif:Georgia,"Times New Roman",serif;
+    --sans:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(160deg,var(--felt),var(--felt-deep));
+       color:var(--cream);font-family:var(--sans);min-height:100vh;
+       -webkit-font-smoothing:antialiased;padding:18px}
+  .wrap{max-width:720px;margin:0 auto}
+  .eyebrow{color:var(--flag);font-weight:800;letter-spacing:.28em;font-size:12px;
+           text-transform:uppercase;margin:0 0 2px}
+  h1{font-family:var(--serif);font-weight:700;font-size:26px;margin:0;letter-spacing:.01em}
+  .sub{color:#CFE0D4;font-size:13px;margin:4px 0 0}
+  .topbar{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;
+          flex-wrap:wrap;margin-bottom:14px}
+  button{font-family:var(--sans);cursor:pointer;border:none;border-radius:8px;
+         font-weight:700;font-size:14px;padding:10px 16px;transition:.15s}
+  .btn-primary{background:var(--flag);color:#fff}
+  .btn-primary:hover{filter:brightness(1.06)}
+  .btn-ghost{background:rgba(245,240,225,.12);color:var(--cream)}
+  .btn-ghost:hover{background:rgba(245,240,225,.22)}
+  button:disabled{opacity:.5;cursor:default}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .auto{display:flex;align-items:center;gap:6px;font-size:13px;color:#CFE0D4}
+  .evpick{margin-top:8px;display:flex;align-items:center;gap:7px;font-size:12px;color:#CFE0D4}
+  .evpick label{font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:11px;color:#9FB7A6}
+  .evpick select{font-family:var(--sans);font-size:13px;font-weight:600;color:var(--ink);
+                 background:var(--cream);border:1px solid rgba(0,0,0,.2);border-radius:7px;
+                 padding:6px 8px;max-width:330px}
+  .panel{background:var(--card);color:var(--ink);border-radius:14px;padding:20px;
+         box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  .panel h2{font-family:var(--serif);margin:0 0 4px;font-size:20px}
+  .panel p.hint{margin:0 0 16px;color:var(--muted);font-size:13px}
+  .team-setup{border:1px solid #E7DFC9;border-radius:10px;padding:14px;margin-bottom:14px;
+              background:#fffdf6}
+  .team-setup label{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;
+                    text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+  input[type=text]{width:100%;padding:9px 11px;border:1px solid #D9CFB3;border-radius:7px;
+                   font-size:14px;font-family:var(--sans);background:#fff;margin-bottom:8px}
+  input[type=text]:focus{outline:2px solid var(--felt);border-color:var(--felt)}
+  .team-name-in{font-weight:800;border-color:var(--felt)}
+  .players-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  @media(max-width:520px){.players-grid{grid-template-columns:1fr}}
+  .board{display:flex;flex-direction:column;gap:12px}
+  .row{background:var(--card);color:var(--ink);border-radius:14px;overflow:hidden;
+       box-shadow:0 8px 22px rgba(0,0,0,.22);animation:pop .35s ease}
+  @keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .row-head{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer}
+  .place{width:34px;height:34px;flex:none;border-radius:50%;background:var(--navy);color:#fff;
+         font-weight:800;display:flex;align-items:center;justify-content:center;font-size:16px}
+  .row.leader .place{background:var(--flag)}
+  .tname{flex:1;min-width:0}
+  .tname .nm{font-weight:800;font-size:17px;display:flex;align-items:center;gap:7px}
+  .tname .mv{font-size:12px;color:var(--muted);margin-top:1px}
+  .flag{color:var(--flag)}
+  .col{flex:none;text-align:center;min-width:62px}
+  .col .lbl{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .col .val{font-weight:800;font-size:22px;font-variant-numeric:tabular-nums;line-height:1.1}
+  .val.under{color:var(--under)} .val.over{color:var(--over)}
+  .chev{flex:none;color:var(--muted);font-size:13px;transition:.2s}
+  .row.open .chev{transform:rotate(180deg)}
+  .players{display:none;border-top:1px solid #ECE4CE;background:#fffdf6}
+  .row.open .players{display:block}
+  .p{display:flex;align-items:center;gap:10px;padding:9px 16px;font-size:14px;
+     border-bottom:1px solid #F1EAD6}
+  .p:last-child{border-bottom:none}
+  .p .pn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .p .thru{color:var(--muted);font-size:12px;width:64px;text-align:right}
+  .p .ps{width:48px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
+  .ps.under{color:var(--under)} .ps.over{color:var(--over)}
+  .p.miss .pn{color:var(--flag)}
+  .p.cut .thru{color:var(--flag);font-weight:700}
+  .msg{background:rgba(245,240,225,.1);border-radius:10px;padding:12px 14px;font-size:13px;
+       color:#E6EFE7;margin-bottom:12px;word-break:break-word}
+  .msg.err{background:rgba(200,68,47,.18);color:#FFE3DC}
+  .msg.ok{background:rgba(30,122,70,.28);color:#E4F6E9}
+  .foot{margin-top:18px;font-size:11.5px;color:#9FB7A6;line-height:1.5;text-align:center}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);
+        border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <p class="eyebrow" id="eyebrow">Loading…</p>
+      <h1>Team Pool — Live</h1>
+      <p class="sub" id="sub">Lowest combined score to par wins.</p>
+      <div class="evpick">
+        <label for="eventSel">Tournament</label>
+        <select id="eventSel"><option value="">Auto-detect (current)</option></select>
+      </div>
+    </div>
+    <div class="controls" id="controls" style="display:none">
+      <label class="auto"><input type="checkbox" id="autoToggle"> Auto-refresh</label>
+      <button class="btn-ghost" id="shareBtn">Share</button>
+      <button class="btn-ghost" id="editBtn">Edit teams</button>
+      <button class="btn-primary" id="refreshBtn">Refresh scores</button>
+    </div>
+  </div>
+  <div id="app"></div>
+  <p class="foot" id="foot"></p>
+</div>
+
+<script>
+/* ===== constants (pool shape lives here, not as magic numbers) ===== */
+const TEAMS=3, PER=5;
+const SCORING_MODE="total";      // "total" (all 5) | "best4" (drop worst) — hook for PLAN §7
+const CUT_PENALTY=0;             // strokes added to a cut player — hook for PLAN §7
+const REFRESH_MS=2*60*1000;      // auto-refresh cadence (>=60s per the feed etiquette)
+const ROSTER_KEY="golf_pool_roster_v1";
+const OVERRIDE_KEY="golf_pool_event_override";
+const SCOREBOARD="https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard";
+const LEADERBOARD="https://site.api.espn.com/apis/site/v2/sports/golf/pga/leaderboard?event=";
+
+let roster=null, scores={}, lastUpdated=null, statusNote="", prevOrder=[], autoTimer=null;
+let calendar=[], curEvent=null, manualEventId=null, fieldLoaded=false;
+
+const app=document.getElementById('app');
+const controls=document.getElementById('controls');
+const foot=document.getElementById('foot');
+const eyebrow=document.getElementById('eyebrow');
+const eventSel=document.getElementById('eventSel');
+
+/* ===== storage ===== */
+function saveRoster(r){ try{ localStorage.setItem(ROSTER_KEY,JSON.stringify(r)); }catch(e){ window.__roster=JSON.stringify(r); } }
+function loadRoster(){ try{ const v=localStorage.getItem(ROSTER_KEY); return v?JSON.parse(v):null; }catch(e){ return window.__roster?JSON.parse(window.__roster):null; } }
+function saveOverride(){ try{ manualEventId?localStorage.setItem(OVERRIDE_KEY,manualEventId):localStorage.removeItem(OVERRIDE_KEY); }catch(e){} }
+function loadOverride(){ try{ return localStorage.getItem(OVERRIDE_KEY)||null; }catch(e){ return null; } }
+
+/* ===== share link (roster travels in the URL, unicode-safe) ===== */
+function encodeRoster(r){ return encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(r))))); }
+function decodeRoster(s){ try{ return JSON.parse(decodeURIComponent(escape(atob(decodeURIComponent(s))))); }catch(e){ return null; } }
+function getRosterFromHash(){ const m=(location.hash||"").match(/[#&]r=([^&]+)/); return m?decodeRoster(m[1]):null; }
+async function copyText(t){
+  try{ await navigator.clipboard.writeText(t); return true; }
+  catch(e){ try{ const ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); const ok=document.execCommand('copy'); document.body.removeChild(ta); return ok; }catch(_){ return false; } }
+}
+async function shareLink(){
+  if(!roster) return;
+  if(location.protocol!=='http:'&&location.protocol!=='https:'){
+    showMsg("To make a tap-to-open link, the page has to be online first. Once it's on GitHub Pages, open it at that web address and hit Share again.",true); return;
+  }
+  const url=location.origin+location.pathname+'#r='+encodeRoster(roster);
+  const ok=await copyText(url);
+  showMsg(ok ? "Link copied — paste it into your group chat. It opens with your teams already loaded."
+             : ("Copy this link to share with your group: "+url), false, ok?"ok":"");
+}
+
+/* ===== small helpers ===== */
+function fmt(n){ if(n===null||n===undefined||n==="") return "–"; if(n===0) return "E"; return n>0?("+"+n):(""+n); }
+function cls(n){ if(n===null||n===undefined||n==="") return ""; if(n<0) return "under"; if(n>0) return "over"; return ""; }
+function parToInt(s){ if(s===null||s===undefined) return null; s=(""+s).trim(); if(s===""||s==="-"||s==="--") return null; if(s.toUpperCase()==="E") return 0; const n=parseInt(s.replace("+",""),10); return isNaN(n)?null:n; }
+function norm(s){ return (s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[.'’`]/g,"").replace(/\s+/g," ").trim(); }
+function esc(s){ return (s||"").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+function ymd(iso){ return iso?iso.slice(0,10).replace(/-/g,""):null; }
+function niceDate(iso){ try{ return new Date(iso).toLocaleDateString([], {weekday:'short',month:'short',day:'numeric'}); }catch(e){ return iso; } }
+
+/* ===== tournament detection (PLAN §4) ===== */
+function withState(c,now){
+  const s=new Date(c.startDate).getTime(), e=new Date(c.endDate).getTime(), t=now.getTime(), H=3600*1000;
+  let state;
+  if(t>=s-12*H && t<=e+18*H) state='live';
+  else if(t<s) state='upcoming';
+  else state='past';
+  return {id:String(c.id), label:c.label, start:c.startDate, end:c.endDate, state};
+}
+function detectCurrentEvent(cal, now){
+  const t=now.getTime(), H=3600*1000;
+  let live=null, upcoming=null, past=null;
+  cal.forEach(c=>{
+    const s=new Date(c.startDate).getTime(), e=new Date(c.endDate).getTime();
+    if(t>=s-12*H && t<=e+18*H){ if(!live || s<new Date(live.startDate).getTime()) live=c; }       // in-progress (grace window)
+    else if(s>t){ if(!upcoming || s<new Date(upcoming.startDate).getTime()) upcoming=c; }            // nearest future
+    else if(e<t){ if(!past || e>new Date(past.endDate).getTime()) past=c; }                          // most recent past
+  });
+  const pick=live||upcoming||past||cal[0];
+  return pick?withState(pick,now):null;
+}
+function chooseEvent(now){
+  if(manualEventId){
+    const m=calendar.find(c=>String(c.id)===String(manualEventId));
+    if(m) return withState(m,now);
+  }
+  return detectCurrentEvent(calendar, now);
+}
+
+/* ===== competitor extraction (defensive; never falls back to the WRONG event) ===== */
+function extractCompetitors(data, wantId){
+  const evs=data.events||[];
+  let ev = wantId ? evs.find(x=>String(x.id)===String(wantId)) : evs[0];
+  let comps=null;
+  if(ev){ comps=(ev.competitions&&ev.competitions[0]&&ev.competitions[0].competitors)||ev.competitors; }
+  if(!comps && !wantId && data.competitions&&data.competitions[0]) comps=data.competitions[0].competitors;
+  return { comps: comps||[], ev: ev||null };
+}
+function buildEspnMap(comps){
+  const map={}; let maxPeriod=0;
+  comps.forEach(c=>{
+    const a=c.athlete||{}; const name=a.displayName||a.fullName; if(!name) return;
+    let total=parToInt(c.score), today=null, thru=null;
+    if(Array.isArray(c.linescores)&&c.linescores.length){
+      // ignore phantom future-round placeholders (period present but no score/holes yet)
+      const ls=c.linescores.filter(l=>l&&l.period&&((l.displayValue!=null&&l.displayValue!=="")||(Array.isArray(l.linescores)&&l.linescores.length>0)));
+      if(ls.length){
+        const cur=ls.reduce((m,l)=>(l.period>m.period?l:m),ls[0]);
+        today=parToInt(cur.displayValue);
+        if(cur.period>maxPeriod) maxPeriod=cur.period;
+        const holes=Array.isArray(cur.linescores)?cur.linescores.length:0;   // status is null on /scoreboard — derive thru
+        if(holes>=18) thru="F"; else if(holes>0) thru=String(holes);
+      }
+    }
+    const st=c.status||{};
+    const det=st.type&&(st.type.shortDetail||st.type.detail);
+    if(det&&/cut|wd|dq/i.test(det)) thru=det.match(/cut/i)?"CUT":det;
+    else if(st.thru!==undefined&&st.thru!==null) thru=(st.thru===0||st.thru===18)?"F":String(st.thru);
+    if(typeof total==="number"&&thru==="CUT") total+=CUT_PENALTY;                 // cut-penalty hook
+    map[norm(name)]={total,today,thru};
+  });
+  map.__round=maxPeriod; return map;
+}
+
+/* ===== team scoring (PLAN §5 + best-4 hook §7) ===== */
+function teamSum(players, f){
+  const vals=players.map(p=>scores[p]&&scores[p][f]).filter(v=>typeof v==="number");
+  if(!vals.length) return null;
+  if(SCORING_MODE==="best4" && vals.length>PER-1){
+    vals.sort((a,b)=>a-b);                 // ascending: worst (highest) is last
+    vals.pop();
+  }
+  return vals.reduce((a,b)=>a+b,0);
+}
+
+/* ===== setup view ===== */
+function renderSetup(){
+  controls.style.display="none";
+  const r=roster||{teams:Array.from({length:TEAMS},(_,i)=>({name:"Team "+(i+1),players:Array(PER).fill("")}))};
+  let h=`<div class="panel"><h2>Set up your pool</h2>
+    <p class="hint">Name each team and enter its 5 players' first and last names, the way a leaderboard lists them (e.g. "Scottie Scheffler"). Then use <b>Share</b> to send your group a link with these teams already loaded.</p>`;
+  r.teams.forEach((t,ti)=>{
+    h+=`<div class="team-setup"><label>Team ${ti+1} name</label>
+      <input type="text" class="team-name-in" data-t="${ti}" data-name="1" value="${esc(t.name)}">
+      <label>Players</label><div class="players-grid">`;
+    for(let pi=0;pi<PER;pi++) h+=`<input type="text" data-t="${ti}" data-p="${pi}" placeholder="Player ${pi+1}" value="${esc(t.players[pi]||"")}">`;
+    h+=`</div></div>`;
+  });
+  h+=`<button class="btn-primary" id="saveBtn">Save & start tracking</button></div>`;
+  app.innerHTML=h; foot.textContent="";
+  document.getElementById('saveBtn').onclick=onSave;
+}
+function onSave(){
+  const teams=[];
+  for(let ti=0;ti<TEAMS;ti++){
+    const nm=document.querySelector('[data-t="'+ti+'"][data-name="1"]').value.trim()||("Team "+(ti+1));
+    const players=[];
+    for(let pi=0;pi<PER;pi++){ const v=document.querySelector('[data-t="'+ti+'"][data-p="'+pi+'"]').value.trim(); if(v) players.push(v); }
+    teams.push({name:nm,players});
+  }
+  if(teams.reduce((a,t)=>a+t.players.length,0)===0){ alert("Add at least a few players first."); return; }
+  roster={teams}; saveRoster(roster); renderBoard(); detectAndFetch();
+}
+
+/* ===== leaderboard view ===== */
+function isTracking(){ return !!(roster&&roster.teams&&roster.teams.some(t=>t.players.length)); }
+function renderBoard(){
+  controls.style.display="flex";
+  const ranked=roster.teams.map(t=>({...t,total:teamSum(t.players,"total"),today:teamSum(t.players,"today")}));
+  ranked.sort((a,b)=>{ if(a.total===null&&b.total===null)return 0; if(a.total===null)return 1; if(b.total===null)return -1; return a.total-b.total; });
+  let h=`<div class="board">`;
+  ranked.forEach((t,i)=>{
+    const leader=i===0&&t.total!==null;
+    let mv="";
+    if(prevOrder.length){ const was=prevOrder.indexOf(t.name); if(was>-1&&was!==i){ mv = was>i?('<span class="flag">▲ up '+(was-i)+'</span>'):('▼ down '+(i-was)); } }
+    h+=`<div class="row ${leader?'leader':''}">
+      <div class="row-head" onclick="toggle(this)">
+        <div class="place">${i+1}</div>
+        <div class="tname"><div class="nm">${esc(t.name)} ${leader?'<span class="flag" title="Leader">⛳</span>':''}</div>
+          <div class="mv">${mv||(t.total===null?'awaiting scores':'')}</div></div>
+        <div class="col"><div class="lbl">Today</div><div class="val ${cls(t.today)}">${fmt(t.today)}</div></div>
+        <div class="col"><div class="lbl">Total</div><div class="val ${cls(t.total)}">${fmt(t.total)}</div></div>
+        <div class="chev">▾</div>
+      </div>
+      <div class="players">${t.players.map(playerRow).join("")}</div>
+    </div>`;
+  });
+  h+=`</div>`; app.innerHTML=h; prevOrder=ranked.map(t=>t.name); updateFoot();
+}
+function playerRow(name){
+  const s=scores[name]||{};
+  const cut=s.thru==="CUT";
+  const missing=fieldLoaded && !cut && (s.total===null||s.total===undefined);
+  const thru = cut?"CUT" : (s.thru==="F"?"F" : (s.thru?("thru "+s.thru):""));
+  return `<div class="p ${missing?'miss':''} ${cut?'cut':''}"><div class="pn">${esc(name)}${missing?' — name not matched':''}</div>
+    <div class="thru">${thru}</div><div class="ps ${cls(s.total)}">${fmt(s.total)}</div></div>`;
+}
+function toggle(el){ el.closest('.row').classList.toggle('open'); }
+function updateFoot(){
+  const upd=lastUpdated?("Updated "+lastUpdated):"Not updated yet";
+  foot.innerHTML=`${upd}${statusNote?(" · "+statusNote):""}. Live scores from ESPN's public golf feed.<br>`
+    +`Tap a team to see its players. Not affiliated with the USGA, PGA TOUR, or ESPN.`;
+}
+
+/* ===== header + tournament picker ===== */
+function applyHeader(ev){
+  if(!ev){ eyebrow.textContent="No tournament found"; return; }
+  let tag="";
+  if(ev.state==='upcoming') tag=" · tees off "+niceDate(ev.start);
+  else if(ev.state==='past') tag=" · final";
+  eyebrow.textContent=ev.label+tag;
+  document.title=ev.label+" — Team Pool Live";
+}
+function populateEventSelect(){
+  const opts=['<option value="">Auto-detect (current)</option>'];
+  calendar.forEach(c=>{
+    opts.push(`<option value="${esc(String(c.id))}">${esc(c.label)} — ${niceDate(c.startDate)}</option>`);
+  });
+  eventSel.innerHTML=opts.join("");
+  eventSel.value=manualEventId||"";
+}
+
+/* ===== live data orchestration ===== */
+async function detectAndFetch(){
+  const btn=document.getElementById('refreshBtn');
+  if(btn){ btn.disabled=true; btn.innerHTML='<span class="spin"></span> Updating'; }
+  showMsg("Finding the current tournament…");
+
+  // 1. calendar (always from /scoreboard — the only reliable source of "what week is it")
+  let board=null;
+  try{ const r=await fetch(SCOREBOARD,{cache:"no-store"}); if(r.ok) board=await r.json(); }catch(e){}
+  if(!board||!board.leagues||!board.leagues[0]||!board.leagues[0].calendar){
+    showMsg("Couldn't reach the golf feed. Check your connection and that you opened this at its web address. Showing last known scores.",true);
+    if(btn){ btn.disabled=false; btn.textContent="Refresh scores"; } return;
+  }
+  calendar=board.leagues[0].calendar;
+  curEvent=chooseEvent(new Date());
+  populateEventSelect();
+  applyHeader(curEvent);
+  if(!curEvent){ showMsg("No tournaments on the schedule yet.",true); if(btn){btn.disabled=false;btn.textContent="Refresh scores";} return; }
+
+  // 2. that event's field. /scoreboard sometimes already carries it; otherwise query by its start date.
+  //    NB: extractCompetitors won't return a DIFFERENT event, so a stale /scoreboard can't fool us.
+  let comps=extractCompetitors(board, curEvent.id).comps;
+  if(!comps.length){
+    const urls=[];
+    if(ymd(curEvent.start)) urls.push(SCOREBOARD+"?dates="+ymd(curEvent.start));
+    urls.push(LEADERBOARD+curEvent.id);                       // spec's endpoint, kept for when it returns
+    for(const url of urls){
+      try{ const r=await fetch(url,{cache:"no-store"}); if(!r.ok) continue; const j=await r.json();
+        const x=extractCompetitors(j, curEvent.id); if(x.comps.length){ comps=x.comps; break; }
+      }catch(e){}
+    }
+  }
+
+  const map=buildEspnMap(comps);
+  const round=map.__round; delete map.__round;
+  fieldLoaded = comps.length>0 && (curEvent.state==='live'||curEvent.state==='past');
+
+  // 3. match roster players to the field
+  const players=[]; roster.teams.forEach(t=>t.players.forEach(p=>players.push(p)));
+  const ns={};
+  players.forEach(p=>{
+    const key=norm(p); let hit=map[key];
+    if(!hit){ const k=Object.keys(map).find(k=>k.includes(key)||key.includes(k)); if(k) hit=map[k]; }   // substring fallback
+    ns[p]=hit?{total:hit.total,today:hit.today,thru:hit.thru}:{total:null,today:null,thru:null};
+  });
+  scores=ns;
+  lastUpdated=new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
+
+  // 4. status note + state messaging
+  if(curEvent.state==='upcoming'){
+    statusNote="Tees off "+niceDate(curEvent.start);
+    showMsg("⛳ "+curEvent.label+" tees off "+niceDate(curEvent.start)+". Your teams are set — scores will appear once play begins.");
+  }else if(!comps.length){
+    statusNote="";
+    showMsg("Found "+curEvent.label+", but the field/leaderboard isn't published yet. Try again shortly.",true);
+  }else{
+    statusNote = round?("Round "+round):(curEvent.state==='past'?"Final":"");
+    clearMsg();
+  }
+  if(isTracking()) renderBoard(); else updateFoot();
+  if(btn){ btn.disabled=false; btn.textContent="Refresh scores"; }
+}
+function showMsg(t,err,ok){ let m=document.querySelector('.msg'); if(!m){ m=document.createElement('div'); app.parentNode.insertBefore(m,app);} m.className="msg"+(err?" err":(ok?" ok":"")); m.textContent=t; }
+function clearMsg(){ const m=document.querySelector('.msg'); if(m) m.remove(); }
+
+/* ===== controls ===== */
+document.getElementById('refreshBtn').onclick=detectAndFetch;
+document.getElementById('shareBtn').onclick=shareLink;
+document.getElementById('editBtn').onclick=()=>{ stopAuto(); document.getElementById('autoToggle').checked=false; renderSetup(); };
+document.getElementById('autoToggle').onchange=(e)=>{ e.target.checked?startAuto():stopAuto(); };
+eventSel.onchange=(e)=>{ manualEventId=e.target.value||null; saveOverride(); detectAndFetch(); };
+function startAuto(){ stopAuto(); autoTimer=setInterval(detectAndFetch,REFRESH_MS); detectAndFetch(); }
+function stopAuto(){ if(autoTimer){ clearInterval(autoTimer); autoTimer=null; } }
+
+/* ===== boot ===== */
+(function(){
+  manualEventId=loadOverride();
+  const fromHash=getRosterFromHash();
+  if(fromHash){ roster=fromHash; saveRoster(roster); }
+  else roster=loadRoster();
+  if(isTracking()){ renderBoard(); detectAndFetch(); }
+  else { renderSetup(); detectAndFetch(); }   // still detect, so the picker + header populate on the setup screen
+})();
+</script>
