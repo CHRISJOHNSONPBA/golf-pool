@@ -139,6 +139,8 @@ function loadOverride(){ try{ return localStorage.getItem(OVERRIDE_KEY)||null; }
 function encodeRoster(r){ return encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(r))))); }
 function decodeRoster(s){ try{ return JSON.parse(decodeURIComponent(escape(atob(decodeURIComponent(s))))); }catch(e){ return null; } }
 function getRosterFromHash(){ const m=(location.hash||"").match(/[#&]r=([^&]+)/); return m?decodeRoster(m[1]):null; }
+/* keep the address bar in sync with the saved roster, so copying the URL bar (not just the Share button) also carries the latest teams */
+function syncHash(){ if(!roster) return; try{ history.replaceState(null,"",location.pathname+"#r="+encodeRoster(roster)); }catch(e){} }
 async function copyText(t){
   try{ await navigator.clipboard.writeText(t); return true; }
   catch(e){ try{ const ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); const ok=document.execCommand('copy'); document.body.removeChild(ta); return ok; }catch(_){ return false; } }
@@ -264,7 +266,7 @@ function onSave(){
     teams.push({name:nm,players});
   }
   if(teams.reduce((a,t)=>a+t.players.length,0)===0){ alert("Add at least a few players first."); return; }
-  roster={teams}; saveRoster(roster); renderBoard(); detectAndFetch();
+  roster={teams}; saveRoster(roster); syncHash(); renderBoard(); detectAndFetch();
 }
 
 /* ===== leaderboard view ===== */
