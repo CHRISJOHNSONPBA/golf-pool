@@ -253,9 +253,11 @@ function renderSetup(){
     for(let pi=0;pi<PER;pi++) h+=`<input type="text" data-t="${ti}" data-p="${pi}" placeholder="Player ${pi+1}" value="${esc(t.players[pi]||"")}">`;
     h+=`</div></div>`;
   });
-  h+=`<button class="btn-primary" id="saveBtn">Save & start tracking</button></div>`;
+  h+=`<button class="btn-primary" id="saveBtn">Save & start tracking</button>
+    <button class="btn-ghost" id="saveShareBtn" style="margin-left:8px">Save &amp; share link</button></div>`;
   app.innerHTML=h; foot.textContent="";
   document.getElementById('saveBtn').onclick=onSave;
+  document.getElementById('saveShareBtn').onclick=()=>{ if(onSave()) shareLink(); };
 }
 function onSave(){
   const teams=[];
@@ -265,8 +267,8 @@ function onSave(){
     for(let pi=0;pi<PER;pi++){ const v=document.querySelector('[data-t="'+ti+'"][data-p="'+pi+'"]').value.trim(); if(v) players.push(v); }
     teams.push({name:nm,players});
   }
-  if(teams.reduce((a,t)=>a+t.players.length,0)===0){ alert("Add at least a few players first."); return; }
-  roster={teams}; saveRoster(roster); syncHash(); renderBoard(); detectAndFetch();
+  if(teams.reduce((a,t)=>a+t.players.length,0)===0){ alert("Add at least a few players first."); return false; }
+  roster={teams}; saveRoster(roster); syncHash(); renderBoard(); detectAndFetch(); return true;
 }
 
 /* ===== leaderboard view ===== */
