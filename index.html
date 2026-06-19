@@ -402,6 +402,12 @@ document.getElementById('autoToggle').onchange=(e)=>{ e.target.checked?startAuto
 eventSel.onchange=(e)=>{ manualEventId=e.target.value||null; saveOverride(); detectAndFetch(); };
 function startAuto(){ stopAuto(); autoTimer=setInterval(detectAndFetch,REFRESH_MS); detectAndFetch(); }
 function stopAuto(){ if(autoTimer){ clearInterval(autoTimer); autoTimer=null; } }
+/* if a NEW link arrives while the page is already open (browsers don't reload on a #hash-only change), pick up the new roster */
+window.addEventListener('hashchange', ()=>{
+  const fromHash=getRosterFromHash();
+  if(fromHash){ roster=fromHash; saveRoster(roster); prevOrder=[];
+    if(isTracking()){ renderBoard(); detectAndFetch(); } else renderSetup(); }
+});
 
 /* ===== boot ===== */
 (function(){
@@ -409,7 +415,7 @@ function stopAuto(){ if(autoTimer){ clearInterval(autoTimer); autoTimer=null; } 
   const fromHash=getRosterFromHash();
   if(fromHash){ roster=fromHash; saveRoster(roster); }
   else roster=loadRoster();
-  if(isTracking()){ renderBoard(); detectAndFetch(); }
+  if(isTracking()){ syncHash(); renderBoard(); detectAndFetch(); }   // stamp the full team-link into the URL bar so copying it always carries the teams
   else { renderSetup(); detectAndFetch(); }   // still detect, so the picker + header populate on the setup screen
 })();
 </script>
