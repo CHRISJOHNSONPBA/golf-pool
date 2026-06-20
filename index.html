@@ -34,6 +34,8 @@
   .evpick select{font-family:var(--sans);font-size:13px;font-weight:600;color:var(--ink);
                  background:var(--cream);border:1px solid rgba(0,0,0,.2);border-radius:7px;
                  padding:6px 8px;max-width:330px}
+  .rngsel{font-family:var(--sans);font-size:14px;font-weight:700;color:var(--ink);background:#fff;
+          border:1px solid #D9CFB3;border-radius:7px;padding:8px 9px}
   .panel{background:var(--card);color:var(--ink);border-radius:14px;padding:20px;
          box-shadow:0 10px 30px rgba(0,0,0,.25)}
   .panel h2{font-family:var(--serif);margin:0 0 4px;font-size:20px}
@@ -97,6 +99,11 @@
         <label for="eventSel">Tournament</label>
         <select id="eventSel"><option value="">Auto-detect (current)</option></select>
       </div>
+      <div class="evpick" id="poolBar" style="display:none">
+        <label for="poolSel">Pool</label>
+        <select id="poolSel"></select>
+        <button class="btn-ghost" id="newPoolBtn" style="padding:5px 10px;font-size:12px">+ New pool</button>
+      </div>
     </div>
     <div class="controls" id="controls" style="display:none">
       <label class="auto"><input type="checkbox" id="autoToggle"> Auto-refresh</label>
@@ -115,23 +122,43 @@ const TEAMS=3, PER=5;
 const SCORING_MODE="total";      // "total" (all 5) | "best4" (drop worst) — hook for PLAN §7
 const CUT_PENALTY=0;             // strokes added to a cut player — hook for PLAN §7
 const REFRESH_MS=2*60*1000;      // auto-refresh cadence (>=60s per the feed etiquette)
-const ROSTER_KEY="golf_pool_roster_v1";
+const ROSTER_KEY="golf_pool_roster_v1";        // legacy single-roster key (read once for migration)
+const POOLS_KEY="golf_pool_pools_v1";          // multiple named pools live here now
 const OVERRIDE_KEY="golf_pool_event_override";
 const SCOREBOARD="https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard";
 const LEADERBOARD="https://site.api.espn.com/apis/site/v2/sports/golf/pga/leaderboard?event=";
 
 let roster=null, scores={}, lastUpdated=null, statusNote="", prevOrder=[], autoTimer=null;
 let calendar=[], curEvent=null, manualEventId=null, fieldLoaded=false;
+let poolStore={pools:[],currentId:null};   // all of the organizer's pools on this device
 
 const app=document.getElementById('app');
 const controls=document.getElementById('controls');
 const foot=document.getElementById('foot');
 const eyebrow=document.getElementById('eyebrow');
+const sub=document.getElementById('sub');
 const eventSel=document.getElementById('eventSel');
+const poolSel=document.getElementById('poolSel');
 
-/* ===== storage ===== */
-function saveRoster(r){ try{ localStorage.setItem(ROSTER_KEY,JSON.stringify(r)); }catch(e){ window.__roster=JSON.stringify(r); } }
-function loadRoster(){ try{ const v=localStorage.getItem(ROSTER_KEY); return v?JSON.parse(v):null; }catch(e){ return window.__roster?JSON.parse(window.__roster):null; } }
+/* ===== storage: several named pools, each its own roster + round range, each shared by its own link ===== */
+function newId(){ return "p"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+/* stable id for legacy links that predate ids, so re-opening one doesn't spawn duplicates */
+function hashRoster(r){ const s=JSON.stringify((r&&r.teams)||r); let h=0; for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))|0; return "h"+(h>>>0).toString(36); }
+function savePools(){ try{ localStorage.setItem(POOLS_KEY,JSON.stringify(poolStore)); }catch(e){ window.__pools=JSON.stringify(poolStore); } }
+function loadPools(){
+  let store=null;
+  try{ const v=localStorage.getItem(POOLS_KEY); if(v) store=JSON.parse(v); }catch(e){ try{ store=window.__pools?JSON.parse(window.__pools):null; }catch(_){} }
+  if(store&&Array.isArray(store.pools)) return store;
+  // one-time migration from the old single-roster key
+  let legacy=null;
+  try{ const v=localStorage.getItem(ROSTER_KEY); if(v) legacy=JSON.parse(v); }catch(e){}
+  if(legacy&&legacy.teams){ const id=newId(); return {pools:[{id,name:legacy.name||"Pool 1",teams:legacy.teams,rounds:legacy.rounds||null}],currentId:id}; }
+  return {pools:[],currentId:null};
+}
+function currentPool(){ return poolStore.pools.find(p=>p.id===poolStore.currentId)||null; }
+function upsertPool(p){ const i=poolStore.pools.findIndex(x=>x.id===p.id); if(i>-1) poolStore.pools[i]=p; else poolStore.pools.push(p); poolStore.currentId=p.id; savePools(); }
+/* fold a roster that arrived via a shared link into the local pool list and make it active */
+function adoptRoster(r){ if(!r) return; if(!r.id) r.id=hashRoster(r); if(!r.name) r.name="Shared pool"; upsertPool(r); roster=r; prevOrder=[]; scores={}; fieldLoaded=false; }
 function saveOverride(){ try{ manualEventId?localStorage.setItem(OVERRIDE_KEY,manualEventId):localStorage.removeItem(OVERRIDE_KEY); }catch(e){} }
 function loadOverride(){ try{ return localStorage.getItem(OVERRIDE_KEY)||null; }catch(e){ return null; } }
 
@@ -207,14 +234,15 @@ function buildEspnMap(comps){
   const map={}; let maxPeriod=0;
   comps.forEach(c=>{
     const a=c.athlete||{}; const name=a.displayName||a.fullName; if(!name) return;
-    let total=parToInt(c.score), today=null, thru=null;
+    let total=parToInt(c.score), thru=null, curPeriod=0;
+    const rounds={};   // period -> that round's to-par, so a pool can count any slice of rounds
     if(Array.isArray(c.linescores)&&c.linescores.length){
       // ignore phantom future-round placeholders (period present but no score/holes yet)
       const ls=c.linescores.filter(l=>l&&l.period&&((l.displayValue!=null&&l.displayValue!=="")||(Array.isArray(l.linescores)&&l.linescores.length>0)));
-      if(ls.length){
+      ls.forEach(l=>{ const v=parToInt(l.displayValue); if(typeof v==="number") rounds[l.period]=v; if(l.period>curPeriod) curPeriod=l.period; });
+      if(curPeriod){
         const cur=ls.reduce((m,l)=>(l.period>m.period?l:m),ls[0]);
-        today=parToInt(cur.displayValue);
-        if(cur.period>maxPeriod) maxPeriod=cur.period;
+        if(curPeriod>maxPeriod) maxPeriod=curPeriod;
         const holes=Array.isArray(cur.linescores)?cur.linescores.length:0;   // status is null on /scoreboard — derive thru
         if(holes>=18) thru="F"; else if(holes>0) thru=String(holes);
       }
@@ -224,14 +252,27 @@ function buildEspnMap(comps){
     if(det&&/cut|wd|dq/i.test(det)) thru=det.match(/cut/i)?"CUT":det;
     else if(st.thru!==undefined&&st.thru!==null) thru=(st.thru===0||st.thru===18)?"F":String(st.thru);
     if(typeof total==="number"&&thru==="CUT") total+=CUT_PENALTY;                 // cut-penalty hook
-    map[norm(name)]={total,today,thru};
+    map[norm(name)]={total,rounds,today:(curPeriod?rounds[curPeriod]:null),thru,period:curPeriod};
   });
   map.__round=maxPeriod; return map;
 }
 
 /* ===== team scoring (PLAN §5 + best-4 hook §7) ===== */
+/* which tournament rounds this pool counts; default = the whole tournament */
+function poolRange(){ const r=roster&&roster.rounds; let from=(r&&r.from)||1, to=(r&&r.to)||4; if(to<from){const t=from;from=to;to=t;} return {from,to}; }
+function fullRange(rng){ return rng.from<=1 && rng.to>=4; }
+/* a player's contribution to this pool's Total = sum of their to-par over the counted rounds */
+function playerTotal(s,rng){
+  if(!s) return null;
+  if(fullRange(rng) && typeof s.total==="number") return s.total;   // whole tournament → trust the feed's cumulative (carries cut/penalty)
+  let t=null; for(let p=rng.from;p<=rng.to;p++){ const v=s.rounds&&s.rounds[p]; if(typeof v==="number") t=(t||0)+v; }
+  return t;
+}
+/* a player's Today only counts when the live round is one this pool tracks */
+function playerToday(s,rng){ if(!s) return null; const p=s.period; if(!p||p<rng.from||p>rng.to) return null; const v=s.rounds&&s.rounds[p]; return typeof v==="number"?v:null; }
 function teamSum(players, f){
-  const vals=players.map(p=>scores[p]&&scores[p][f]).filter(v=>typeof v==="number");
+  const rng=poolRange();
+  const vals=players.map(p=>{ const s=scores[p]; return f==="today"?playerToday(s,rng):playerTotal(s,rng); }).filter(v=>typeof v==="number");
   if(!vals.length) return null;
   if(SCORING_MODE==="best4" && vals.length>PER-1){
     vals.sort((a,b)=>a-b);                 // ascending: worst (highest) is last
@@ -244,8 +285,23 @@ function teamSum(players, f){
 function renderSetup(){
   controls.style.display="none";
   const r=roster||{teams:Array.from({length:TEAMS},(_,i)=>({name:"Team "+(i+1),players:Array(PER).fill("")}))};
-  let h=`<div class="panel"><h2>Set up your pool</h2>
-    <p class="hint">Name each team and enter its 5 players' first and last names, the way a leaderboard lists them (e.g. "Scottie Scheffler"). Then use <b>Share</b> to send your group a link with these teams already loaded.</p>`;
+  const editingId = roster&&roster.id&&poolStore.pools.some(p=>p.id===roster.id) ? roster.id : null;
+  const poolName = (roster&&roster.name) || ("Pool "+(poolStore.pools.length+1));
+  const rng = poolRange();
+  const rOpt=(sel)=>[1,2,3,4].map(n=>`<option value="${n}"${n===sel?" selected":""}>Round ${n}</option>`).join("");
+  let h=`<div class="panel"><h2>${editingId?"Edit pool":"Set up your pool"}</h2>
+    <p class="hint">Name each team and enter its 5 players' first and last names, the way a leaderboard lists them (e.g. "Scottie Scheffler"). Then use <b>Share</b> to send your group a link with these teams already loaded.</p>
+    <div class="team-setup" style="background:#fff">
+      <label>Pool name</label>
+      <input type="text" id="poolNameIn" class="team-name-in" value="${esc(poolName)}" placeholder="e.g. Saturday Crew">
+      <label style="margin-top:10px">Rounds counted</label>
+      <div style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink)">
+        <select id="roundFrom" class="rngsel">${rOpt(rng.from)}</select>
+        <span>through</span>
+        <select id="roundTo" class="rngsel">${rOpt(rng.to)}</select>
+      </div>
+      <p class="hint" style="margin:7px 0 0">Only these tournament rounds add to the score. Leave at Round&nbsp;1 → Round&nbsp;4 for a normal pool; set Round&nbsp;3 → Round&nbsp;4 for a weekend-only pool.</p>
+    </div>`;
   r.teams.forEach((t,ti)=>{
     h+=`<div class="team-setup"><label>Team ${ti+1} name</label>
       <input type="text" class="team-name-in" data-t="${ti}" data-name="1" value="${esc(t.name)}">
@@ -254,10 +310,13 @@ function renderSetup(){
     h+=`</div></div>`;
   });
   h+=`<button class="btn-primary" id="saveBtn">Save & start tracking</button>
-    <button class="btn-ghost" id="saveShareBtn" style="margin-left:8px">Save &amp; share link</button></div>`;
+    <button class="btn-ghost" id="saveShareBtn" style="margin-left:8px">Save &amp; share link</button>`;
+  if(editingId) h+=`<button class="btn-ghost" id="delPoolBtn" style="margin-left:8px">Delete pool</button>`;
+  h+=`</div>`;
   app.innerHTML=h; foot.textContent="";
   document.getElementById('saveBtn').onclick=onSave;
   document.getElementById('saveShareBtn').onclick=()=>{ if(onSave()) shareLink(); };
+  if(editingId) document.getElementById('delPoolBtn').onclick=deleteCurrentPool;
 }
 function onSave(){
   const teams=[];
@@ -268,13 +327,44 @@ function onSave(){
     teams.push({name:nm,players});
   }
   if(teams.reduce((a,t)=>a+t.players.length,0)===0){ alert("Add at least a few players first."); return false; }
-  roster={teams}; saveRoster(roster); syncHash(); renderBoard(); detectAndFetch(); return true;
+  const name=(document.getElementById('poolNameIn')?.value||"").trim() || ("Pool "+(poolStore.pools.length+1));
+  let from=parseInt(document.getElementById('roundFrom')?.value||"1",10), to=parseInt(document.getElementById('roundTo')?.value||"4",10);
+  if(!(from>=1&&from<=4)) from=1; if(!(to>=1&&to<=4)) to=4; if(to<from){ const t=from; from=to; to=t; }
+  const id=(roster&&roster.id)||newId();
+  roster={id,name,teams,rounds:{from,to}};
+  upsertPool(roster); syncHash(); populatePoolSelect(); renderBoard(); detectAndFetch(); return true;
+}
+/* ===== pool switching ===== */
+function populatePoolSelect(){
+  const bar=document.getElementById('poolBar');
+  if(!poolStore.pools.length){ bar.style.display="none"; return; }
+  bar.style.display="flex";
+  poolSel.innerHTML=poolStore.pools.map(p=>`<option value="${esc(p.id)}">${esc(p.name||"Untitled pool")}</option>`).join("");
+  poolSel.value=poolStore.currentId||"";
+}
+function switchPool(id){
+  const p=poolStore.pools.find(x=>x.id===id); if(!p) return;
+  poolStore.currentId=id; savePools();
+  roster=p; prevOrder=[]; scores={}; fieldLoaded=false; syncHash(); populatePoolSelect();
+  if(isTracking()){ renderBoard(); detectAndFetch(); } else renderSetup();
+}
+function newPool(){ roster=null; prevOrder=[]; scores={}; fieldLoaded=false; renderSetup(); }
+function deleteCurrentPool(){
+  if(!roster||!roster.id) return;
+  if(!confirm('Delete pool "'+(roster.name||"")+'"? This only removes it from this device — anyone with its link still has it.')) return;
+  poolStore.pools=poolStore.pools.filter(p=>p.id!==roster.id);
+  poolStore.currentId=poolStore.pools[0]?poolStore.pools[0].id:null;
+  savePools(); roster=currentPool(); prevOrder=[]; scores={}; fieldLoaded=false; populatePoolSelect();
+  if(roster&&isTracking()){ syncHash(); renderBoard(); detectAndFetch(); } else renderSetup();
 }
 
 /* ===== leaderboard view ===== */
 function isTracking(){ return !!(roster&&roster.teams&&roster.teams.some(t=>t.players.length)); }
 function renderBoard(){
   controls.style.display="flex";
+  const rng=poolRange();
+  sub.textContent = fullRange(rng) ? "Lowest combined score to par wins."
+    : `Counting rounds ${rng.from}–${rng.to} · lowest combined to par wins.`;
   const ranked=roster.teams.map(t=>({...t,total:teamSum(t.players,"total"),today:teamSum(t.players,"today")}));
   ranked.sort((a,b)=>{ if(a.total===null&&b.total===null)return 0; if(a.total===null)return 1; if(b.total===null)return -1; return a.total-b.total; });
   let h=`<div class="board">`;
@@ -299,10 +389,11 @@ function renderBoard(){
 function playerRow(name){
   const s=scores[name]||{};
   const cut=s.thru==="CUT";
-  const missing=fieldLoaded && !cut && (s.total===null||s.total===undefined);
+  const missing=fieldLoaded && !cut && !s.matched;                 // not found in the field at all (≠ simply hasn't scored in the counted rounds yet)
+  const total=playerTotal(s,poolRange());                          // this player's to-par over the rounds this pool counts
   const thru = cut?"CUT" : (s.thru==="F"?"F" : (s.thru?("thru "+s.thru):""));
   return `<div class="p ${missing?'miss':''} ${cut?'cut':''}"><div class="pn">${esc(name)}${missing?' — name not matched':''}</div>
-    <div class="thru">${thru}</div><div class="ps ${cls(s.total)}">${fmt(s.total)}</div></div>`;
+    <div class="thru">${thru}</div><div class="ps ${cls(total)}">${fmt(total)}</div></div>`;
 }
 function toggle(el){ el.closest('.row').classList.toggle('open'); }
 function updateFoot(){
@@ -372,7 +463,8 @@ async function detectAndFetch(){
   players.forEach(p=>{
     const key=norm(p); let hit=map[key];
     if(!hit){ const k=Object.keys(map).find(k=>k.includes(key)||key.includes(k)); if(k) hit=map[k]; }   // substring fallback
-    ns[p]=hit?{total:hit.total,today:hit.today,thru:hit.thru}:{total:null,today:null,thru:null};
+    ns[p]=hit?{total:hit.total,rounds:hit.rounds,today:hit.today,thru:hit.thru,period:hit.period,matched:true}
+             :{total:null,rounds:{},today:null,thru:null,period:0,matched:false};
   });
   scores=ns;
   lastUpdated=new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
@@ -400,22 +492,26 @@ document.getElementById('shareBtn').onclick=shareLink;
 document.getElementById('editBtn').onclick=()=>{ stopAuto(); document.getElementById('autoToggle').checked=false; renderSetup(); };
 document.getElementById('autoToggle').onchange=(e)=>{ e.target.checked?startAuto():stopAuto(); };
 eventSel.onchange=(e)=>{ manualEventId=e.target.value||null; saveOverride(); detectAndFetch(); };
+poolSel.onchange=(e)=>{ stopAuto(); document.getElementById('autoToggle').checked=false; switchPool(e.target.value); };
+document.getElementById('newPoolBtn').onclick=()=>{ stopAuto(); document.getElementById('autoToggle').checked=false; newPool(); };
 function startAuto(){ stopAuto(); autoTimer=setInterval(detectAndFetch,REFRESH_MS); detectAndFetch(); }
 function stopAuto(){ if(autoTimer){ clearInterval(autoTimer); autoTimer=null; } }
 /* if a NEW link arrives while the page is already open (browsers don't reload on a #hash-only change), pick up the new roster */
 window.addEventListener('hashchange', ()=>{
   const fromHash=getRosterFromHash();
-  if(fromHash){ roster=fromHash; saveRoster(roster); prevOrder=[];
+  if(fromHash){ adoptRoster(fromHash); populatePoolSelect();
     if(isTracking()){ renderBoard(); detectAndFetch(); } else renderSetup(); }
 });
 
 /* ===== boot ===== */
 (function(){
+  poolStore=loadPools();
   manualEventId=loadOverride();
   const fromHash=getRosterFromHash();
-  if(fromHash){ roster=fromHash; saveRoster(roster); }
-  else roster=loadRoster();
-  if(isTracking()){ syncHash(); renderBoard(); detectAndFetch(); }   // stamp the full team-link into the URL bar so copying it always carries the teams
+  if(fromHash) adoptRoster(fromHash);        // a shared link wins: adopt it as a pool and make it active
+  else roster=currentPool();
+  populatePoolSelect();
+  if(roster&&isTracking()){ syncHash(); renderBoard(); detectAndFetch(); }   // stamp the full team-link into the URL bar so copying it always carries the teams
   else { renderSetup(); detectAndFetch(); }   // still detect, so the picker + header populate on the setup screen
 })();
 </script>
