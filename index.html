@@ -79,6 +79,11 @@
   .ps.under{color:var(--under)} .ps.over{color:var(--over)}
   .p.miss .pn{color:var(--flag)}
   .p.cut .thru{color:var(--flag);font-weight:700}
+  .p .corr{color:var(--under);font-size:12px;cursor:help}
+  .fixbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+          background:rgba(30,122,70,.2);color:#E4F6E9;border-radius:10px;padding:9px 14px;
+          font-size:13px;margin-bottom:12px}
+  .fixbar button{background:var(--under);color:#fff;padding:6px 12px;font-size:13px}
   .msg{background:rgba(245,240,225,.1);border-radius:10px;padding:12px 14px;font-size:13px;
        color:#E6EFE7;margin-bottom:12px;word-break:break-word}
   .msg.err{background:rgba(200,68,47,.18);color:#FFE3DC}
@@ -188,6 +193,25 @@ function fmt(n){ if(n===null||n===undefined||n==="") return "–"; if(n===0) ret
 function cls(n){ if(n===null||n===undefined||n==="") return ""; if(n<0) return "under"; if(n>0) return "over"; return ""; }
 function parToInt(s){ if(s===null||s===undefined) return null; s=(""+s).trim(); if(s===""||s==="-"||s==="--") return null; if(s.toUpperCase()==="E") return 0; const n=parseInt(s.replace("+",""),10); return isNaN(n)?null:n; }
 function norm(s){ return (s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[.'’`]/g,"").replace(/\s+/g," ").trim(); }
+/* Levenshtein edit distance — powers typo-tolerant name matching */
+function editDist(a,b){
+  const m=a.length,n=b.length; if(!m) return n; if(!n) return m;
+  let prev=Array.from({length:n+1},(_,i)=>i), cur=new Array(n+1);
+  for(let i=1;i<=m;i++){ cur[0]=i;
+    for(let j=1;j<=n;j++){ const cost=a.charCodeAt(i-1)===b.charCodeAt(j-1)?0:1;
+      cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+cost); }
+    const t=prev; prev=cur; cur=t;
+  }
+  return prev[n];
+}
+/* nearest field name to a typed one, only when it's a clear, unambiguous win (guards against wrong auto-corrections) */
+function fuzzyKey(key,keys){
+  let best=null,bestD=Infinity,second=Infinity;
+  for(const k of keys){ const d=editDist(key,k);
+    if(d<bestD){ second=bestD; bestD=d; best=k; } else if(d<second){ second=d; } }
+  const thr=Math.max(1,Math.round(key.length*0.25));   // allow ~1 typo per 4 chars
+  return (best!==null && bestD<=thr && bestD<second) ? best : null;
+}
 function esc(s){ return (s||"").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
 function ymd(iso){ return iso?iso.slice(0,10).replace(/-/g,""):null; }
 function niceDate(iso){ try{ return new Date(iso).toLocaleDateString([], {weekday:'short',month:'short',day:'numeric'}); }catch(e){ return iso; } }
@@ -252,7 +276,7 @@ function buildEspnMap(comps){
     if(det&&/cut|wd|dq/i.test(det)) thru=det.match(/cut/i)?"CUT":det;
     else if(st.thru!==undefined&&st.thru!==null) thru=(st.thru===0||st.thru===18)?"F":String(st.thru);
     if(typeof total==="number"&&thru==="CUT") total+=CUT_PENALTY;                 // cut-penalty hook
-    map[norm(name)]={total,rounds,today:(curPeriod?rounds[curPeriod]:null),thru,period:curPeriod};
+    map[norm(name)]={total,rounds,today:(curPeriod?rounds[curPeriod]:null),thru,period:curPeriod,name};   // keep the leaderboard's canonical spelling
   });
   map.__round=maxPeriod; return map;
 }
@@ -392,7 +416,10 @@ function renderBoard(){
     : `Counting rounds ${rng.from}–${rng.to} · lowest combined to par wins.`;
   const ranked=roster.teams.map(t=>({...t,total:teamSum(t.players,"total"),today:teamSum(t.players,"today")}));
   ranked.sort((a,b)=>{ if(a.total===null&&b.total===null)return 0; if(a.total===null)return 1; if(b.total===null)return -1; return a.total-b.total; });
-  let h=`<div class="board">`;
+  const fixes=pendingCorrections();
+  let h="";
+  if(fixes.length) h+=`<div class="fixbar"><span>Matched ${fixes.length} name${fixes.length>1?"s":""} to the leaderboard's spelling.</span><button id="fixSpellBtn">Fix spelling${fixes.length>1?"s":""}</button></div>`;
+  h+=`<div class="board">`;
   ranked.forEach((t,i)=>{
     const leader=i===0&&t.total!==null;
     let mv="";
@@ -410,6 +437,7 @@ function renderBoard(){
     </div>`;
   });
   h+=`</div>`; app.innerHTML=h; prevOrder=ranked.map(t=>t.name); updateFoot();
+  const fb=document.getElementById('fixSpellBtn'); if(fb) fb.onclick=applyCorrections;
 }
 function playerRow(name){
   const s=scores[name]||{};
@@ -417,8 +445,27 @@ function playerRow(name){
   const missing=fieldLoaded && !cut && !s.matched;                 // not found in the field at all (≠ simply hasn't scored in the counted rounds yet)
   const total=playerTotal(s,poolRange());                          // this player's to-par over the rounds this pool counts
   const thru = cut?"CUT" : (s.thru==="F"?"F" : (s.thru?("thru "+s.thru):""));
-  return `<div class="p ${missing?'miss':''} ${cut?'cut':''}"><div class="pn">${esc(name)}${missing?' — name not matched':''}</div>
-    <div class="thru">${thru}</div><div class="ps ${cls(total)}">${fmt(total)}</div></div>`;
+  const shown = (s.matched&&s.canonical) ? s.canonical : name;     // display the leaderboard's spelling once matched
+  const corrected = s.matched&&s.canonical&&s.canonical!==name;
+  return `<div class="p ${missing?'miss':''} ${cut?'cut':''}"><div class="pn">${esc(shown)}`
+    +`${corrected?' <span class="corr" title="You typed “'+esc(name)+'” — matched to this player on the leaderboard">✎</span>':''}`
+    +`${missing?' — name not matched':''}</div>`
+    +`<div class="thru">${thru}</div><div class="ps ${cls(total)}">${fmt(total)}</div></div>`;
+}
+/* players whose typed spelling differs from the leaderboard's — offered as one-click fixes */
+function pendingCorrections(){
+  const out=[];
+  if(roster&&roster.teams) roster.teams.forEach(t=>t.players.forEach(p=>{
+    const s=scores[p]; if(s&&s.matched&&s.canonical&&s.canonical!==p) out.push(p);
+  }));
+  return out;
+}
+/* rewrite the saved roster to the leaderboard's exact spellings, so the fix persists and travels in the share link */
+function applyCorrections(){
+  if(!roster) return; let changed=0;
+  roster.teams.forEach(t=>{ t.players=t.players.map(p=>{ const s=scores[p]; if(s&&s.matched&&s.canonical&&s.canonical!==p){ changed++; return s.canonical; } return p; }); });
+  if(!changed) return;
+  upsertPool(roster); syncHash(); prevOrder=[]; detectAndFetch();   // re-fetch rebuilds scores keyed by the corrected names
 }
 function toggle(el){ el.closest('.row').classList.toggle('open'); }
 function updateFoot(){
@@ -487,9 +534,10 @@ async function detectAndFetch(){
   const ns={};
   players.forEach(p=>{
     const key=norm(p); let hit=map[key];
-    if(!hit){ const k=Object.keys(map).find(k=>k.includes(key)||key.includes(k)); if(k) hit=map[k]; }   // substring fallback
-    ns[p]=hit?{total:hit.total,rounds:hit.rounds,today:hit.today,thru:hit.thru,period:hit.period,matched:true}
-             :{total:null,rounds:{},today:null,thru:null,period:0,matched:false};
+    if(!hit){ const k=Object.keys(map).find(k=>k.includes(key)||key.includes(k)); if(k) hit=map[k]; }   // substring fallback ("JT Poston" ↔ "J.T. Poston")
+    if(!hit){ const k=fuzzyKey(key,Object.keys(map)); if(k) hit=map[k]; }                                 // typo-tolerant fallback ("Rory McElroy" → "Rory McIlroy")
+    ns[p]=hit?{total:hit.total,rounds:hit.rounds,today:hit.today,thru:hit.thru,period:hit.period,matched:true,canonical:hit.name}
+             :{total:null,rounds:{},today:null,thru:null,period:0,matched:false,canonical:null};
   });
   scores=ns;
   lastUpdated=new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
