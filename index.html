@@ -118,7 +118,7 @@
 
 <script>
 /* ===== constants (pool shape lives here, not as magic numbers) ===== */
-const TEAMS=3, PER=5;
+const DEFAULT_TEAMS=3, MIN_TEAMS=2, MAX_TEAMS=8, PER=5;   // team COUNT is organizer-chosen per pool; team SIZE stays 5
 const SCORING_MODE="total";      // "total" (all 5) | "best4" (drop worst) — hook for PLAN §7
 const CUT_PENALTY=0;             // strokes added to a cut player — hook for PLAN §7
 const REFRESH_MS=2*60*1000;      // auto-refresh cadence (>=60s per the feed etiquette)
@@ -282,27 +282,56 @@ function teamSum(players, f){
 }
 
 /* ===== setup view ===== */
-function renderSetup(){
+/* read the current, possibly-unsaved state of the setup form (players keep their slots — empties preserved so re-renders stay aligned) */
+function readSetupForm(){
+  const nameEl=document.getElementById('poolNameIn');
+  const name=nameEl?nameEl.value.trim():"";
+  const from=parseInt((document.getElementById('roundFrom')||{}).value||"1",10);
+  const to=parseInt((document.getElementById('roundTo')||{}).value||"4",10);
+  const teams=[];
+  document.querySelectorAll('[data-name="1"]').forEach(nmEl=>{
+    const ti=nmEl.getAttribute('data-t');
+    const players=[];
+    for(let pi=0;pi<PER;pi++){ const el=document.querySelector('[data-t="'+ti+'"][data-p="'+pi+'"]'); players.push(el&&el.value.trim()?el.value.trim():""); }
+    teams.push({name:nmEl.value.trim()||("Team "+(parseInt(ti,10)+1)), players});
+  });
+  return {name, rounds:{from,to}, teams};
+}
+/* organizer changed the team count: keep what they've typed, grow/shrink the block list, re-render */
+function changeTeamCount(n){
+  n=Math.max(MIN_TEAMS,Math.min(MAX_TEAMS,n||DEFAULT_TEAMS));
+  const draft=readSetupForm();
+  const teams=draft.teams.slice(0,n);
+  while(teams.length<n) teams.push({name:"Team "+(teams.length+1),players:Array(PER).fill("")});
+  draft.teams=teams;
+  renderSetup(draft);
+}
+/* renderSetup() renders the saved pool; renderSetup(draft) renders an in-progress edit (e.g. after a team-count change) without saving it */
+function renderSetup(draft){
   controls.style.display="none";
-  const r=roster||{teams:Array.from({length:TEAMS},(_,i)=>({name:"Team "+(i+1),players:Array(PER).fill("")}))};
+  const base = draft || roster || {teams:Array.from({length:DEFAULT_TEAMS},(_,i)=>({name:"Team "+(i+1),players:Array(PER).fill("")}))};
   const editingId = roster&&roster.id&&poolStore.pools.some(p=>p.id===roster.id) ? roster.id : null;
-  const poolName = (roster&&roster.name) || ("Pool "+(poolStore.pools.length+1));
-  const rng = poolRange();
+  const poolName = base.name || (roster&&roster.name) || ("Pool "+(poolStore.pools.length+1));
+  let rng; { const rr=base.rounds; let from=(rr&&rr.from)||1, to=(rr&&rr.to)||4; if(to<from){const t=from;from=to;to=t;} rng={from,to}; }
+  const teamCount=base.teams.length;
   const rOpt=(sel)=>[1,2,3,4].map(n=>`<option value="${n}"${n===sel?" selected":""}>Round ${n}</option>`).join("");
+  const tcOpt=()=>{ let o=""; for(let n=MIN_TEAMS;n<=MAX_TEAMS;n++) o+=`<option value="${n}"${n===teamCount?" selected":""}>${n} teams</option>`; return o; };
   let h=`<div class="panel"><h2>${editingId?"Edit pool":"Set up your pool"}</h2>
     <p class="hint">Name each team and enter its 5 players' first and last names, the way a leaderboard lists them (e.g. "Scottie Scheffler"). Then use <b>Share</b> to send your group a link with these teams already loaded.</p>
     <div class="team-setup" style="background:#fff">
       <label>Pool name</label>
       <input type="text" id="poolNameIn" class="team-name-in" value="${esc(poolName)}" placeholder="e.g. Saturday Crew">
+      <label style="margin-top:10px">Number of teams</label>
+      <select id="teamCountSel" class="rngsel">${tcOpt()}</select>
       <label style="margin-top:10px">Rounds counted</label>
       <div style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink)">
         <select id="roundFrom" class="rngsel">${rOpt(rng.from)}</select>
         <span>through</span>
         <select id="roundTo" class="rngsel">${rOpt(rng.to)}</select>
       </div>
-      <p class="hint" style="margin:7px 0 0">Only these tournament rounds add to the score. Leave at Round&nbsp;1 → Round&nbsp;4 for a normal pool; set Round&nbsp;3 → Round&nbsp;4 for a weekend-only pool.</p>
+      <p class="hint" style="margin:7px 0 0">Only these tournament rounds add to the score. Whole tournament → Round&nbsp;1 → Round&nbsp;4; weekend → Round&nbsp;3 → Round&nbsp;4; first two rounds → Round&nbsp;1 → Round&nbsp;2. For a single-round draft set both to the same round (e.g. Round&nbsp;2 → Round&nbsp;2).</p>
     </div>`;
-  r.teams.forEach((t,ti)=>{
+  base.teams.forEach((t,ti)=>{
     h+=`<div class="team-setup"><label>Team ${ti+1} name</label>
       <input type="text" class="team-name-in" data-t="${ti}" data-name="1" value="${esc(t.name)}">
       <label>Players</label><div class="players-grid">`;
@@ -314,21 +343,17 @@ function renderSetup(){
   if(editingId) h+=`<button class="btn-ghost" id="delPoolBtn" style="margin-left:8px">Delete pool</button>`;
   h+=`</div>`;
   app.innerHTML=h; foot.textContent="";
+  document.getElementById('teamCountSel').onchange=e=>changeTeamCount(parseInt(e.target.value,10));
   document.getElementById('saveBtn').onclick=onSave;
   document.getElementById('saveShareBtn').onclick=()=>{ if(onSave()) shareLink(); };
   if(editingId) document.getElementById('delPoolBtn').onclick=deleteCurrentPool;
 }
 function onSave(){
-  const teams=[];
-  for(let ti=0;ti<TEAMS;ti++){
-    const nm=document.querySelector('[data-t="'+ti+'"][data-name="1"]').value.trim()||("Team "+(ti+1));
-    const players=[];
-    for(let pi=0;pi<PER;pi++){ const v=document.querySelector('[data-t="'+ti+'"][data-p="'+pi+'"]').value.trim(); if(v) players.push(v); }
-    teams.push({name:nm,players});
-  }
+  const form=readSetupForm();
+  const teams=form.teams.map((t,ti)=>({name:t.name||("Team "+(ti+1)), players:t.players.filter(Boolean)}));
   if(teams.reduce((a,t)=>a+t.players.length,0)===0){ alert("Add at least a few players first."); return false; }
-  const name=(document.getElementById('poolNameIn')?.value||"").trim() || ("Pool "+(poolStore.pools.length+1));
-  let from=parseInt(document.getElementById('roundFrom')?.value||"1",10), to=parseInt(document.getElementById('roundTo')?.value||"4",10);
+  const name=form.name || ("Pool "+(poolStore.pools.length+1));
+  let from=form.rounds.from, to=form.rounds.to;
   if(!(from>=1&&from<=4)) from=1; if(!(to>=1&&to<=4)) to=4; if(to<from){ const t=from; from=to; to=t; }
   const id=(roster&&roster.id)||newId();
   roster={id,name,teams,rounds:{from,to}};
